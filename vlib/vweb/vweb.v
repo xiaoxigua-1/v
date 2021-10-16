@@ -10,6 +10,7 @@ import net.http
 import net.urllib
 import time
 import json
+import log
 
 // A type which don't get filtered inside templates
 pub type RawHtml = string
@@ -142,10 +143,14 @@ pub struct Context {
 mut:
 	content_type string = 'text/plain'
 	status       string = '200 OK'
+	logger log.Log = log.Log{}
 pub:
 	// HTTP Request
 	req http.Request
 	// TODO Response
+
+	// default logs path
+	log_file_path string = './logs'
 pub mut:
 	done bool
 	// time.ticks() from start of vweb connection handle.
@@ -249,6 +254,7 @@ pub fn (mut ctx Context) file(f_path string) Result {
 	ext := os.file_ext(f_path)
 	data := os.read_file(f_path) or {
 		ctx.server_error(500)
+		ctx.logger.error('$f_path not found')
 		return Result{}
 	}
 	ctx.send_response_to_client(vweb.mime_types[ext], data)
@@ -367,6 +373,25 @@ interface DbInterface {
 pub fn run<T>(global_app &T, port int) {
 	mut l := net.listen_tcp(.ip6, ':$port') or { panic('failed to listen $err.code $err') }
 
+	// Logger init
+	mut logger := global_app.logger
+
+	// Logger file date
+	now_time := time.now().get_fmt_str(.hyphen, .no_time,
+		.yyyymmdd)
+	logger.set_level(.info)
+
+	// Log folder init
+	log_path_is_exists := os.exists(global_app.Context.log_file_path)
+	if !log_path_is_exists {
+		os.mkdir(global_app.Context.log_file_path) or {
+			panic(err)
+		}
+	}
+	logger.set_full_logpath("$global_app.Context.log_file_path/${now_time}.log")
+
+	// Logger to console
+	logger.log_to_console_too()
 	// Parsing methods attributes
 	mut routes := map[string]Route{}
 	$for method in T.methods {
@@ -400,12 +425,15 @@ pub fn run<T>(global_app &T, port int) {
 			eprintln('accept() failed with error: $err.msg')
 			continue
 		}
-		go handle_conn<T>(mut conn, mut request_app, routes)
+		go handle_conn<T>(mut conn, mut request_app, routes, logger)
 	}
 }
 
 [manualfree]
-fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route) {
+fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, logger log.Log) {
+	now_time := time.now().get_fmt_str(.hyphen, .no_time,
+		.yyyymmdd)
+	app.Context.logger.set_full_logpath("$app.Context.log_file_path/${now_time}.log")
 	conn.set_read_timeout(30 * time.second)
 	conn.set_write_timeout(30 * time.second)
 	defer {
@@ -457,6 +485,7 @@ fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route) {
 		files: files
 		static_files: app.static_files
 		static_mime_types: app.static_mime_types
+		logger: logger
 	}
 
 	// Calling middleware...
