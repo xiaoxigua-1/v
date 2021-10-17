@@ -172,7 +172,7 @@ pub mut:
 	// ? It doesn't seem to be used anywhere
 	form_error string
 
-	logger log.Log = log.Log{}
+	logger log.Log
 }
 
 struct FileData {
@@ -190,8 +190,8 @@ struct Route {
 // Defining this method is optional.
 // This method called at server start.
 // You can use it for initializing globals.
-pub fn (ctx Context) init_server() {
-	eprintln('init_server() has been deprecated, please init your web app in `fn main()`')
+pub fn (mut ctx Context) init_server() {
+	ctx.logger.error('init_server() has been deprecated, please init your web app in `fn main()`')
 }
 
 // Defining this method is optional.
@@ -255,7 +255,7 @@ pub fn (mut ctx Context) file(f_path string) Result {
 	ext := os.file_ext(f_path)
 	data := os.read_file(f_path) or {
 		ctx.server_error(500)
-		ctx.logger.error('$f_path not found')
+		ctx.logger.error('$f_path file not found')
 		return Result{}
 	}
 	ctx.send_response_to_client(vweb.mime_types[ext], data)
@@ -271,7 +271,7 @@ pub fn (mut ctx Context) ok(s string) Result {
 // Response a server error
 pub fn (mut ctx Context) server_error(ecode int) Result {
 	$if debug {
-		eprintln('> ctx.server_error ecode: $ecode')
+		ctx.logger.error('> ctx.server_error ecode: $ecode')
 	}
 	if ctx.done {
 		return Result{}
@@ -375,7 +375,7 @@ pub fn run<T>(global_app &T, port int) {
 	mut l := net.listen_tcp(.ip6, ':$port') or { panic('failed to listen $err.code $err') }
 
 	// Logger init
-	mut logger := global_app.logger
+	mut logger := log.Log{}
 
 	// Logger file date
 	now_time := time.now().get_fmt_str(.hyphen, .no_time,
@@ -383,21 +383,22 @@ pub fn run<T>(global_app &T, port int) {
 	logger.set_level(.info)
 
 	// Log folder init
-	log_path_is_exists := os.exists(global_app.Context.log_file_path)
+	log_path_is_exists := os.exists(global_app.log_file_path)
 	if !log_path_is_exists {
-		os.mkdir(global_app.Context.log_file_path) or {
+		os.mkdir(global_app.log_file_path) or {
 			panic(err)
 		}
 	}
-	logger.set_full_logpath("$global_app.Context.log_file_path/${now_time}.log")
+	logger.set_full_logpath("$global_app.log_file_path/${now_time}.log")
 
 	// Logger to console
 	logger.log_to_console_too()
+
 	// Parsing methods attributes
 	mut routes := map[string]Route{}
 	$for method in T.methods {
 		http_methods, route_path := parse_attrs(method.name, method.attrs) or {
-			eprintln('error parsing method attributes: $err')
+			logger.error('error parsing method attributes: $err')
 			return
 		}
 
@@ -423,18 +424,15 @@ pub fn run<T>(global_app &T, port int) {
 		request_app.Context = global_app.Context // copy the context ref that contains static files map etc
 		mut conn := l.accept() or {
 			// failures should not panic
-			eprintln('accept() failed with error: $err.msg')
+			logger.error('accept() failed with error: $err.msg')
 			continue
 		}
-		go handle_conn<T>(mut conn, mut request_app, routes, logger)
+		go handle_conn<T>(mut conn, mut request_app, routes, mut &logger)
 	}
 }
 
 [manualfree]
-fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, logger log.Log) {
-	now_time := time.now().get_fmt_str(.hyphen, .no_time,
-		.yyyymmdd)
-	app.Context.logger.set_full_logpath("$app.Context.log_file_path/${now_time}.log")
+fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, mut logger log.Log) {
 	conn.set_read_timeout(30 * time.second)
 	conn.set_write_timeout(30 * time.second)
 	defer {
@@ -455,14 +453,14 @@ fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, logg
 	req := http.parse_request(mut reader) or {
 		// Prevents errors from being thrown when BufferedReader is empty
 		if '$err' != 'none' {
-			eprintln('error parsing request: $err')
+			logger.error('error parsing request: $err')
 		}
 		return
 	}
 
 	// URL Parse
 	url := urllib.parse(req.url) or {
-		eprintln('error parsing path: $err')
+		logger.error('error parsing path: $err')
 		return
 	}
 
@@ -502,7 +500,7 @@ fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, logg
 	$for method in T.methods {
 		$if method.return_type is Result {
 			route := routes[method.name] or {
-				eprintln('parsed attributes for the `$method.name` are not found, skipping...')
+				logger.warn('parsed attributes for the `$method.name` are not found, skipping...')
 				Route{}
 			}
 
@@ -537,7 +535,7 @@ fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, logg
 				if params := route_matches(url_words, route_words) {
 					method_args := params.clone()
 					if method_args.len != method.args.len {
-						eprintln('warning: uneven parameters count ($method.args.len) in `$method.name`, compared to the vweb route `$method.attrs` ($method_args.len)')
+						logger.warn('uneven parameters count ($method.args.len) in `$method.name`, compared to the vweb route `$method.attrs` ($method_args.len)')
 					}
 					app.$method(method_args)
 					return
@@ -685,7 +683,7 @@ pub fn (ctx &Context) ip() string {
 
 // Set s to the form error
 pub fn (mut ctx Context) error(s string) {
-	println('vweb error: $s')
+	ctx.logger.error('vweb error: $s')
 	ctx.form_error = s
 }
 
