@@ -143,7 +143,6 @@ pub struct Context {
 mut:
 	content_type string = 'text/plain'
 	status       string = '200 OK'
-	logger log.Log = log.Log{}
 pub:
 	// HTTP Request
 	req http.Request
@@ -172,6 +171,8 @@ pub mut:
 	header http.Header // response headers
 	// ? It doesn't seem to be used anywhere
 	form_error string
+
+	logger log.Log = log.Log{}
 }
 
 struct FileData {
@@ -405,7 +406,7 @@ pub fn run<T>(global_app &T, port int) {
 			path: route_path
 		}
 	}
-	println('[Vweb] Running app on http://localhost:$port')
+	logger.info('[Vweb] Running app on http://localhost:$port')
 	for {
 		// Create a new app object for each connection, copy global data like db connections
 		mut request_app := &T{}
