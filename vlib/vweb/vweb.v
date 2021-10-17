@@ -464,6 +464,8 @@ fn handle_conn<T>(mut conn net.TcpConn, mut app T, routes map[string]Route, mut 
 		return
 	}
 
+	logger.info('[$req.method] $req.url')
+
 	// Query parse
 	query := parse_query_from_url(url)
 	url_words := url.path.split('/').filter(it != '')
